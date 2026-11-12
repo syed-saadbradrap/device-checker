@@ -2,22 +2,10 @@ import {
   LayoutDashboard,
   Smartphone,
   Monitor,
-  Globe,
-  SunMoon,
   Mail,
-  MailOpen,
-  Inbox,
   Gauge,
-  Accessibility,
-  Search,
-  Link2,
   Camera,
-  GitCompare,
-  Eye,
-  FolderKanban,
   History,
-  FileText,
-  TabletSmartphone,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -36,54 +24,26 @@ export type NavSection = {
 
 export const NAV_SECTIONS: NavSection[] = [
   {
-    title: "Dashboard",
+    title: "Start",
     items: [
-      { title: "Overview", href: "/dashboard", icon: LayoutDashboard },
-      { title: "Recent Tests", href: "/dashboard/recent", icon: History },
+      { title: "Home", href: "/dashboard", icon: LayoutDashboard, description: "Start a test and see recent activity" },
     ],
   },
   {
-    title: "Website Testing",
+    title: "Test",
     items: [
-      { title: "Responsive Tester", href: "/testing/responsive", icon: Smartphone },
-      { title: "Device Preview", href: "/testing/devices", icon: TabletSmartphone },
-      { title: "Browser Tester", href: "/testing/browsers", icon: Globe },
-      { title: "Theme Tester", href: "/testing/themes", icon: SunMoon },
+      { title: "Test Website", href: "/testing/responsive", icon: Smartphone, description: "Preview a URL on several devices" },
+      { title: "Test Email", href: "/email/tester", icon: Mail, description: "Preview and check HTML email" },
+      { title: "Website Audit", href: "/audits", icon: Gauge, description: "Performance, accessibility and SEO" },
+      { title: "Screenshots", href: "/visual/screenshots", icon: Camera, description: "Capture or compare screenshots" },
+      { title: "Devices", href: "/devices", icon: Monitor, description: "Browse screen sizes" },
     ],
   },
   {
-    title: "Email Testing",
+    title: "More",
     items: [
-      { title: "HTML Email Tester", href: "/email/tester", icon: Mail },
-      { title: "Email Responsive Preview", href: "/email/responsive", icon: MailOpen },
-      { title: "Email Compatibility", href: "/email/compatibility", icon: Inbox },
-    ],
-  },
-  {
-    title: "Website Audits",
-    items: [
-      { title: "Performance", href: "/audits/performance", icon: Gauge },
-      { title: "Accessibility", href: "/audits/accessibility", icon: Accessibility },
-      { title: "SEO Analyzer", href: "/audits/seo", icon: Search },
-      { title: "Broken Links", href: "/audits/links", icon: Link2 },
-    ],
-  },
-  {
-    title: "Visual Testing",
-    items: [
-      { title: "Screenshot Capture", href: "/visual/screenshots", icon: Camera },
-      { title: "Screenshot Comparison", href: "/visual/compare", icon: GitCompare },
-      { title: "Visual Regression", href: "/visual/regression", icon: Eye },
-    ],
-  },
-  {
-    title: "Management",
-    items: [
-      { title: "Projects", href: "/projects", icon: FolderKanban },
-      { title: "Test History", href: "/history", icon: History },
-      { title: "Saved Reports", href: "/reports", icon: FileText },
-      { title: "Device Presets", href: "/devices", icon: Monitor },
-      { title: "Settings", href: "/settings", icon: Settings },
+      { title: "History", href: "/history", icon: History, description: "Your recent tests" },
+      { title: "Settings", href: "/settings", icon: Settings, description: "Theme and preferences" },
     ],
   },
 ];

@@ -2,10 +2,18 @@
 
 import { useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { Camera, Gauge, Mail, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 const KEY = "devicelab-onboarded";
+
+const FEATURES = [
+  { icon: Smartphone, title: "Test Website", text: "Paste a URL and see it on phone, tablet and laptop." },
+  { icon: Mail, title: "Test Email", text: "Paste email HTML, preview it and find problems." },
+  { icon: Gauge, title: "Website Audit", text: "Check speed, accessibility and SEO in one place." },
+  { icon: Camera, title: "Screenshots", text: "Real browser screenshots, plus before/after compare." },
+];
 
 function subscribe(onStoreChange: () => void) {
   window.addEventListener("storage", onStoreChange);
@@ -36,26 +44,36 @@ export function Onboarding() {
         <CardHeader>
           <CardTitle>Welcome to DeviceLab</CardTitle>
           <CardDescription>
-            Test any public website or email HTML across devices, browsers, themes, and audits —
-            with real browser automation, not fake metrics.
+            Check how your website or email looks and performs. Here&apos;s everything you can do:
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--muted-foreground)]">
-            <li>Paste a URL in Responsive Tester to open a multi-device workspace.</li>
-            <li>If a site blocks iframes, use Playwright screenshot / browser testing instead.</li>
-            <li>Run Performance, Accessibility, and SEO audits for actionable reports.</li>
-            <li>Press ⌘/Ctrl+K anytime for the command palette.</li>
-          </ol>
+          <ul className="space-y-3">
+            {FEATURES.map((f) => (
+              <li key={f.title} className="flex items-start gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[var(--secondary)]">
+                  <f.icon className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{f.title}</p>
+                  <p className="text-sm text-[var(--muted-foreground)]">{f.text}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-[var(--muted-foreground)]">
+            Tip: press Ctrl+K (⌘K on Mac) to jump anywhere.
+          </p>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={dismiss}>Get started</Button>
-            <Link
-              href="/testing/responsive"
-              className="inline-flex h-9 items-center rounded-md border border-[var(--border)] px-4 text-sm font-medium hover:bg-[var(--accent)]"
-              onClick={dismiss}
-            >
-              Test a website
+            <Link href="/testing/responsive" onClick={dismiss}>
+              <Button>
+                <Smartphone className="h-4 w-4" />
+                Test a website now
+              </Button>
             </Link>
+            <Button variant="outline" onClick={dismiss}>
+              Look around first
+            </Button>
           </div>
         </CardContent>
       </Card>

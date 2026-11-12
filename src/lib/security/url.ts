@@ -71,7 +71,12 @@ export const publicHttpUrlSchema = z
     }
   }, "Only http and https URLs are allowed")
   .refine((value) => {
-    const u = new URL(value);
+    let u: URL;
+    try {
+      u = new URL(value);
+    } catch {
+      return false;
+    }
     const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
     if (BLOCKED_HOSTNAMES.has(host)) return false;
     if (BLOCKED_SUFFIXES.some((s) => host.endsWith(s))) return false;
@@ -89,7 +94,9 @@ export type SafeUrlResult =
  * Re-checks resolved IPs to mitigate DNS rebinding for SSRF.
  */
 export async function validatePublicUrl(input: string): Promise<SafeUrlResult> {
-  const parsed = publicHttpUrlSchema.safeParse(input);
+  const trimmed = typeof input === "string" ? input.trim() : "";
+  const withScheme = trimmed && !/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? `https://${trimmed}` : trimmed;
+  const parsed = publicHttpUrlSchema.safeParse(withScheme);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message || "Invalid URL" };
   }

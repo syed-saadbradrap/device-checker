@@ -1,37 +1,33 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { use, useMemo, useState } from "react";
 import {
   Camera,
   ExternalLink,
-  Maximize2,
+  Loader2,
+  Play,
   Plus,
   RefreshCw,
   RotateCw,
+  ScanSearch,
   Search,
-  Trash2,
+  X,
   ZoomIn,
   ZoomOut,
-  Link2,
-  Play,
 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/page-header";
+import { normalizeUrl } from "@/components/shared/url-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs } from "@/components/ui/tabs";
 import { DeviceFrame } from "@/components/testing/device-frame";
 import { PreviewPane } from "@/components/testing/preview-pane";
-import {
-  DEFAULT_DEVICES,
-  DEVICE_PRESETS,
-  RESPONSIVE_BREAKPOINTS,
-  getDeviceById,
-  type DevicePreset,
-} from "@/lib/devices/presets";
-import { cn } from "@/lib/utils";
+import { DEVICE_PRESETS, getDeviceById, type DevicePreset } from "@/lib/devices/presets";
 import { apiFetch } from "@/lib/api/client";
+import { cn } from "@/lib/utils";
 
 type AnalyzerIssue = {
   status: "PASS" | "FAIL" | "WARNING" | "INFO";
@@ -48,376 +44,440 @@ type ViewportResult = {
   summary: Record<string, number>;
 };
 
-export default function ResponsiveTesterPage() {
-  const [urlInput, setUrlInput] = useState("https://example.com");
-  const [activeUrl, setActiveUrl] = useState("");
-  const [deviceIds, setDeviceIds] = useState<string[]>(DEFAULT_DEVICES.slice(0, 4));
+type Mode = "live" | "screenshots";
+
+const STARTER_DEVICES = ["iphone-16-pro", "ipad-pro-11-2024", "macbook-air-13"];
+const EXAMPLE_SITES = ["example.com", "wikipedia.org", "nextjs.org"];
+
+function resolveDevice(id: string): DevicePreset | undefined {
+  if (id.startsWith("custom:")) {
+    const [, w, h] = id.split(":");
+    return {
+      id,
+      name: `Custom ${w}×${h}`,
+      brand: "Custom",
+      category: "phone",
+      width: Number(w),
+      height: Number(h),
+      dpr: 1,
+    } as DevicePreset;
+  }
+  return getDeviceById(id);
+}
+
+function initialDevices(param: string | string[] | undefined): string[] {
+  const raw = Array.isArray(param) ? param.join(",") : param;
+  const ids = (raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((id) => /^custom:\d{3,4}:\d{3,4}$/.test(id) || getDeviceById(id));
+  return ids.length ? ids : STARTER_DEVICES;
+}
+
+export default function ResponsiveTesterPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const params = use(searchParams);
+  const urlParam = typeof params.url === "string" ? normalizeUrl(params.url) : "";
+
+  const [urlInput, setUrlInput] = useState(urlParam);
+  const [activeUrl, setActiveUrl] = useState(urlParam);
+  const [deviceIds, setDeviceIds] = useState<string[]>(() => initialDevices(params.device));
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
-  const [zoom, setZoom] = useState(0.35);
-  const [syncScroll, setSyncScroll] = useState(false);
-  const [scrollTop, setScrollTop] = useState(0);
+  const [zoom, setZoom] = useState(0.4);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [mode, setMode] = useState<Mode>("live");
+  const [shots, setShots] = useState<Record<string, string>>({});
+  const [capturing, setCapturing] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [deviceQuery, setDeviceQuery] = useState("");
   const [customW, setCustomW] = useState(390);
   const [customH, setCustomH] = useState(844);
   const [analyzing, setAnalyzing] = useState(false);
   const [results, setResults] = useState<ViewportResult[] | null>(null);
-  const [shots, setShots] = useState<Record<string, string>>({});
-  const [capturing, setCapturing] = useState(false);
-  const [panel, setPanel] = useState<"devices" | "results" | "inspect">("devices");
-  const [fullscreenId, setFullscreenId] = useState<string | null>(null);
 
   const devices = useMemo(
-    () =>
-      deviceIds
-        .map((id) => {
-          if (id.startsWith("custom:")) {
-            const [, w, h] = id.split(":");
-            return {
-              id,
-              name: `Custom ${w}×${h}`,
-              brand: "Custom" as const,
-              category: "phone" as const,
-              width: Number(w),
-              height: Number(h),
-              dpr: 1,
-            } satisfies DevicePreset;
-          }
-          return getDeviceById(id);
-        })
-        .filter(Boolean) as DevicePreset[],
+    () => deviceIds.map(resolveDevice).filter(Boolean) as DevicePreset[],
     [deviceIds]
   );
 
   const library = useMemo(() => {
-    const q = deviceQuery.toLowerCase();
+    const q = deviceQuery.toLowerCase().trim();
     return DEVICE_PRESETS.filter(
       (d) =>
         !q ||
         d.name.toLowerCase().includes(q) ||
         d.brand.toLowerCase().includes(q) ||
-        d.id.includes(q)
-    ).slice(0, 40);
+        d.category.includes(q)
+    ).slice(0, 30);
   }, [deviceQuery]);
 
-  const launch = () => {
-    let value = urlInput.trim();
-    if (!value) return toast.error("Enter a URL");
-    if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
-    setActiveUrl(value);
+  const size = (d: DevicePreset) =>
+    orientation === "portrait"
+      ? { w: d.width, h: d.height }
+      : { w: d.height, h: d.width };
+
+  const shotKey = (d: DevicePreset) => `${d.id}:${orientation}`;
+
+  function launch(value = urlInput) {
+    const next = normalizeUrl(value);
+    if (!next) {
+      toast.error("Type a website address first, e.g. example.com");
+      return;
+    }
+    setUrlInput(next);
+    setActiveUrl(next);
     setResults(null);
     setShots({});
+    setMode("live");
     setRefreshKey((k) => k + 1);
-    toast.success("Workspace launched");
-  };
+  }
 
-  const addDevice = (id: string) => {
-    setDeviceIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-  };
+  function addDevice(id: string) {
+    if (deviceIds.includes(id)) {
+      toast.info("Already added");
+      return;
+    }
+    if (deviceIds.length >= 6) {
+      toast.error("Up to 6 devices at a time — remove one first");
+      return;
+    }
+    setDeviceIds((prev) => [...prev, id]);
+  }
 
-  const removeDevice = (id: string) => {
+  function removeDevice(id: string) {
     setDeviceIds((prev) => prev.filter((x) => x !== id));
-  };
+  }
 
-  const addCustom = () => {
-    if (customW < 200 || customH < 200) {
-      toast.error("Minimum viewport is 200×200");
+  function addCustom() {
+    if (customW < 200 || customH < 200 || customW > 3840 || customH > 3840) {
+      toast.error("Size must be between 200 and 3840 pixels");
       return;
     }
     addDevice(`custom:${customW}:${customH}`);
-  };
+  }
 
-  const runAnalyzer = async () => {
-    if (!activeUrl) return toast.error("Launch a URL first");
-    setAnalyzing(true);
-    setPanel("results");
-    try {
-      const res = await apiFetch<{ results: ViewportResult[] }>("/api/analyze/responsive", {
+  async function captureScreenshots(force = false) {
+    if (!activeUrl) return;
+    const targets = devices.filter((d) => force || !shots[shotKey(d)]);
+    if (targets.length === 0) return;
+    setCapturing(true);
+    let ok = 0;
+    for (const d of targets) {
+      const { w, h } = size(d);
+      const res = await apiFetch<{ imageBase64: string }>("/api/screenshot", {
         method: "POST",
         body: JSON.stringify({
           url: activeUrl,
-          widths: [...RESPONSIVE_BREAKPOINTS],
+          width: w,
+          height: h,
+          dpr: d.dpr,
+          deviceId: d.id.startsWith("custom:") ? undefined : d.id,
+          engine: "chromium",
         }),
       });
-      if (!res.ok) throw new Error(res.error);
-      setResults(res.data.results);
-      toast.success("Responsive analysis complete");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Analysis failed");
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  const captureAll = async () => {
-    if (!activeUrl) return toast.error("Launch a URL first");
-    setCapturing(true);
-    try {
-      const next: Record<string, string> = {};
-      for (const d of devices) {
-        const w = orientation === "portrait" ? d.width : d.height;
-        const h = orientation === "portrait" ? d.height : d.width;
-        const res = await apiFetch<{ imageBase64: string; browserVersion?: string }>(
-          "/api/screenshot",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              url: activeUrl,
-              width: w,
-              height: h,
-              dpr: d.dpr,
-              deviceId: d.id.startsWith("custom:") ? undefined : d.id,
-              engine: "chromium",
-            }),
-          }
-        );
-        if (!res.ok) throw new Error(res.error);
-        next[d.id] = res.data.imageBase64;
+      if (!res.ok) {
+        toast.error(`${d.name}: ${res.error}`);
+        continue;
       }
-      setShots(next);
-      toast.success("Screenshots captured via Playwright");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Screenshot failed");
-    } finally {
-      setCapturing(false);
+      ok++;
+      const key = shotKey(d);
+      setShots((prev) => ({ ...prev, [key]: res.data.imageBase64 }));
     }
-  };
+    setCapturing(false);
+    if (ok) toast.success(`Captured ${ok} screenshot${ok === 1 ? "" : "s"}`);
+  }
 
-  const retestViewport = useCallback(
-    async (width: number) => {
-      if (!activeUrl) return;
-      try {
-        const res = await apiFetch<{ results: ViewportResult[] }>("/api/analyze/responsive", {
-          method: "POST",
-          body: JSON.stringify({ url: activeUrl, widths: [width] }),
-        });
-        if (!res.ok) throw new Error(res.error);
-        setResults((prev) => {
-          if (!prev) return res.data.results;
-          const others = prev.filter((r) => r.width !== width);
-          return [...others, ...res.data.results].sort((a, b) => a.width - b.width);
-        });
-        toast.success(`Retested ${width}px`);
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Retest failed");
-      }
-    },
-    [activeUrl]
-  );
+  function switchMode(next: Mode) {
+    setMode(next);
+    if (next === "screenshots") void captureScreenshots();
+  }
 
-  const fullscreenDevice = fullscreenId
-    ? devices.find((d) => d.id === fullscreenId)
-    : null;
+  async function runAnalyzer() {
+    if (!activeUrl) return;
+    const widths = [...new Set(devices.map((d) => size(d).w))].sort((a, b) => a - b);
+    if (widths.length === 0) {
+      toast.error("Add at least one device first");
+      return;
+    }
+    setAnalyzing(true);
+    const res = await apiFetch<{ results: ViewportResult[] }>("/api/analyze/responsive", {
+      method: "POST",
+      body: JSON.stringify({ url: activeUrl, widths }),
+    });
+    setAnalyzing(false);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    setResults(res.data.results);
+    const problems = res.data.results.reduce(
+      (n, r) => n + r.issues.filter((i) => i.status === "FAIL" || i.status === "WARNING").length,
+      0
+    );
+    toast.success(problems ? `Found ${problems} thing${problems === 1 ? "" : "s"} to check` : "No layout problems found");
+  }
 
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Responsive Tester"
-        description="Multi-device CSS viewport workspace with iframe previews when allowed, Playwright screenshots, and breakpoint analysis."
+        title="Test Website"
+        description="Type a website, press Launch, and see it on a phone, tablet and laptop at the same time."
       />
 
-      {/* URL bar */}
       <Card>
-        <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Link2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+        <CardContent className="p-4">
+          <form
+            className="flex flex-col gap-2 sm:flex-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              launch();
+            }}
+          >
             <Input
-              className="pl-9"
+              className="h-11 flex-1 text-base"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && launch()}
-              placeholder="https://example.com"
+              placeholder="example.com"
+              inputMode="url"
               aria-label="Website URL"
             />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={launch}>
+            <Button type="submit" size="lg" className="h-11">
               <Play className="h-4 w-4" />
               Launch
             </Button>
-            <Button
-              variant="outline"
-              disabled={!activeUrl}
-              onClick={() => setRefreshKey((k) => k + 1)}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
-            {activeUrl && (
-              <a href={activeUrl} target="_blank" rel="noopener noreferrer">
-                <Button variant="outline">
-                  <ExternalLink className="h-4 w-4" />
-                  Open
-                </Button>
-              </a>
-            )}
-          </div>
+          </form>
+          <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+            Works with any public website. Local addresses (localhost, 192.168.x.x) can&apos;t be tested.
+          </p>
         </CardContent>
       </Card>
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setZoom((z) => Math.max(0.15, Number((z - 0.05).toFixed(2))))}
-        >
-          <ZoomOut className="h-3.5 w-3.5" />
-        </Button>
-        <span className="text-xs text-[var(--muted-foreground)]">{Math.round(zoom * 100)}%</span>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => setZoom((z) => Math.min(1, Number((z + 0.05).toFixed(2))))}
-        >
-          <ZoomIn className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() =>
-            setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"))
-          }
-        >
-          <RotateCw className="h-3.5 w-3.5" />
-          {orientation}
-        </Button>
-        <Button
-          size="sm"
-          variant={syncScroll ? "default" : "outline"}
-          onClick={() => setSyncScroll((s) => !s)}
-        >
-          Sync scroll {syncScroll ? "on" : "off"}
-        </Button>
-        <Button size="sm" variant="outline" disabled={!activeUrl || capturing} onClick={captureAll}>
-          <Camera className="h-3.5 w-3.5" />
-          {capturing ? "Capturing…" : "Screenshot all"}
-        </Button>
-        <Button size="sm" disabled={!activeUrl || analyzing} onClick={runAnalyzer}>
-          {analyzing ? "Analyzing…" : "Run responsive analyzer"}
-        </Button>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[280px_1fr_320px]">
-        {/* Device library */}
-        <Card className="h-fit xl:sticky xl:top-20">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Device toolbar</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-              <Input
-                className="h-8 pl-8 text-xs"
-                placeholder="Search devices…"
-                value={deviceQuery}
-                onChange={(e) => setDeviceQuery(e.target.value)}
-              />
-            </div>
-            <div className="flex gap-1">
-              <Input
-                type="number"
-                className="h-8 text-xs"
-                value={customW}
-                onChange={(e) => setCustomW(Number(e.target.value))}
-                aria-label="Custom width"
-              />
-              <Input
-                type="number"
-                className="h-8 text-xs"
-                value={customH}
-                onChange={(e) => setCustomH(Number(e.target.value))}
-                aria-label="Custom height"
-              />
-              <Button size="sm" variant="outline" onClick={addCustom}>
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-            <div className="max-h-[420px] space-y-1 overflow-y-auto">
-              {library.map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => addDevice(d.id)}
-                  className={cn(
-                    "flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-[var(--accent)]",
-                    deviceIds.includes(d.id) && "bg-[var(--accent)]"
-                  )}
-                >
-                  <span className="truncate font-medium">{d.name}</span>
-                  <span className="text-[10px] text-[var(--muted-foreground)]">
-                    {d.width}×{d.height}
-                    {d.estimated ? "*" : ""}
-                  </span>
-                </button>
+      {!activeUrl ? (
+        <Card>
+          <CardContent className="flex min-h-[320px] flex-col items-center justify-center gap-3 p-8 text-center">
+            <p className="text-base font-medium">Start by typing a website above and pressing Launch</p>
+            <p className="max-w-md text-sm text-[var(--muted-foreground)]">
+              We&apos;ll show it on {devices.map((d) => d.name).join(", ")}. You can add or remove
+              devices after launching.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <span className="self-center text-xs text-[var(--muted-foreground)]">Try:</span>
+              {EXAMPLE_SITES.map((site) => (
+                <Button key={site} variant="outline" size="sm" onClick={() => launch(site)}>
+                  {site}
+                </Button>
               ))}
             </div>
-            <p className="text-[10px] text-[var(--muted-foreground)]">
-              * Estimated CSS viewport. Active: {devices.length}
-            </p>
           </CardContent>
         </Card>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={mode}
+              onChange={switchMode}
+              tabs={[
+                { id: "live", label: "Live preview" },
+                {
+                  id: "screenshots",
+                  label: "Real browser screenshots",
+                  badge: capturing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined,
+                },
+              ]}
+            />
+            <div className="flex flex-wrap items-center gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setOrientation((o) => (o === "portrait" ? "landscape" : "portrait"))}
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                {orientation === "portrait" ? "Rotate to landscape" : "Rotate to portrait"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Zoom out"
+                onClick={() => setZoom((z) => Math.max(0.2, Number((z - 0.1).toFixed(2))))}
+              >
+                <ZoomOut className="h-3.5 w-3.5" />
+              </Button>
+              <span className="w-10 text-center text-xs tabular-nums text-[var(--muted-foreground)]">
+                {Math.round(zoom * 100)}%
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Zoom in"
+                onClick={() => setZoom((z) => Math.min(1, Number((z + 0.1).toFixed(2))))}
+              >
+                <ZoomIn className="h-3.5 w-3.5" />
+              </Button>
+              {mode === "live" ? (
+                <Button size="sm" variant="outline" onClick={() => setRefreshKey((k) => k + 1)}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Reload
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={capturing}
+                  onClick={() => void captureScreenshots(true)}
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  Retake
+                </Button>
+              )}
+              <a href={activeUrl} target="_blank" rel="noopener noreferrer">
+                <Button size="sm" variant="ghost">
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open site
+                </Button>
+              </a>
+            </div>
+          </div>
 
-        {/* Preview area */}
-        <div className="min-w-0 space-y-3">
-          {!activeUrl ? (
+          <p className="text-xs text-[var(--muted-foreground)]">
+            {mode === "live"
+              ? "Live preview loads the real site inside each frame so you can scroll and click. Some sites block this — if so, switch to screenshots."
+              : "Screenshots are taken in a real Chromium browser at each device's screen size. They always work, even when live preview is blocked."}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {devices.map((d) => (
+              <span
+                key={d.id}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--card)] py-1 pl-3 pr-1 text-xs"
+              >
+                {d.name}
+                <button
+                  type="button"
+                  onClick={() => removeDevice(d.id)}
+                  className="rounded-full p-0.5 hover:bg-[var(--accent)]"
+                  aria-label={`Remove ${d.name}`}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            <Button size="sm" variant={pickerOpen ? "default" : "outline"} onClick={() => setPickerOpen((v) => !v)}>
+              <Plus className="h-3.5 w-3.5" />
+              Add device
+            </Button>
+          </div>
+
+          {pickerOpen ? (
             <Card>
-              <CardContent className="flex min-h-[360px] flex-col items-center justify-center gap-2 p-8 text-center">
-                <p className="text-sm font-medium">Enter a public URL and launch</p>
-                <p className="max-w-md text-xs text-[var(--muted-foreground)]">
-                  Previews use sandboxed iframes when the site allows embedding. Sites that set
-                  X-Frame-Options or restrictive CSP are never faked — use Playwright screenshots
-                  instead.
-                </p>
+              <CardContent className="space-y-3 p-4">
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="relative flex-1">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                    <Input
+                      className="pl-8"
+                      placeholder="Search: iPhone, Galaxy, tablet, laptop…"
+                      value={deviceQuery}
+                      onChange={(e) => setDeviceQuery(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      className="w-20"
+                      value={customW}
+                      onChange={(e) => setCustomW(Number(e.target.value))}
+                      aria-label="Custom width"
+                    />
+                    <span className="text-xs text-[var(--muted-foreground)]">×</span>
+                    <Input
+                      type="number"
+                      className="w-20"
+                      value={customH}
+                      onChange={(e) => setCustomH(Number(e.target.value))}
+                      aria-label="Custom height"
+                    />
+                    <Button variant="outline" onClick={addCustom}>
+                      Add size
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid max-h-64 gap-1 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3">
+                  {library.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => addDevice(d.id)}
+                      className={cn(
+                        "flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-[var(--accent)]",
+                        deviceIds.includes(d.id) && "bg-[var(--accent)] font-medium"
+                      )}
+                    >
+                      <span className="truncate">{d.name}</span>
+                      <span className="text-[10px] text-[var(--muted-foreground)]">
+                        {d.width}×{d.height}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {devices.length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center text-sm text-[var(--muted-foreground)]">
+                No devices selected. Click “Add device” to pick one.
               </CardContent>
             </Card>
           ) : (
             <div className="flex gap-6 overflow-x-auto pb-4">
               {devices.map((d) => {
-                const w = orientation === "portrait" ? d.width : d.height;
-                const h = orientation === "portrait" ? d.height : d.width;
+                const { w, h } = size(d);
+                const shot = shots[shotKey(d)];
                 return (
-                  <div key={d.id} className="relative shrink-0">
-                    <div className="absolute right-0 top-0 z-10 flex gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        onClick={() => setFullscreenId(d.id)}
-                        aria-label="Fullscreen"
-                      >
-                        <Maximize2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7"
-                        onClick={() => removeDevice(d.id)}
-                        aria-label="Remove device"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                  <div key={d.id} className="flex shrink-0 flex-col items-center gap-1">
+                    <Badge variant={mode === "live" ? "info" : "success"}>
+                      {mode === "live" ? "Live iframe preview" : "Real browser screenshot"}
+                    </Badge>
                     <DeviceFrame device={d} scale={zoom} orientation={orientation}>
-                      {shots[d.id] ? (
+                      {mode === "live" ? (
+                        <PreviewPane
+                          url={activeUrl}
+                          width={w}
+                          height={h}
+                          refreshKey={refreshKey}
+                          onUseScreenshots={() => switchMode("screenshots")}
+                        />
+                      ) : shot ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={`data:image/png;base64,${shots[d.id]}`}
+                          src={`data:image/png;base64,${shot}`}
                           alt={`${d.name} screenshot`}
                           width={w}
                           height={h}
                           className="block"
                         />
                       ) : (
-                        <PreviewPane
-                          url={activeUrl}
-                          width={w}
-                          height={h}
-                          syncScroll={syncScroll}
-                          scrollTop={scrollTop}
-                          onScroll={setScrollTop}
-                          refreshKey={refreshKey}
-                        />
+                        <div
+                          className="flex flex-col items-center justify-center gap-3 bg-[var(--muted)] text-center"
+                          style={{ width: w, height: h }}
+                        >
+                          {capturing ? (
+                            <>
+                              <Loader2 className="h-10 w-10 animate-spin text-[var(--muted-foreground)]" />
+                              <p className="text-base text-[var(--muted-foreground)]">Taking screenshot…</p>
+                            </>
+                          ) : (
+                            <Button size="lg" onClick={() => void captureScreenshots()}>
+                              <Camera className="h-4 w-4" />
+                              Take screenshot
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </DeviceFrame>
                   </div>
@@ -425,155 +485,82 @@ export default function ResponsiveTesterPage() {
               })}
             </div>
           )}
-        </div>
 
-        {/* Side panel */}
-        <Card className="h-fit xl:sticky xl:top-20">
-          <CardHeader className="space-y-2 pb-2">
-            <div className="flex gap-1">
-              {(["devices", "results", "inspect"] as const).map((p) => (
-                <Button
-                  key={p}
-                  size="sm"
-                  variant={panel === p ? "default" : "ghost"}
-                  onClick={() => setPanel(p)}
-                >
-                  {p}
-                </Button>
-              ))}
-            </div>
-          </CardHeader>
-          <CardContent className="max-h-[560px] space-y-3 overflow-y-auto text-sm">
-            {panel === "devices" && (
-              <ul className="space-y-2">
-                {devices.map((d) => (
-                  <li
-                    key={d.id}
-                    className="rounded-md border border-[var(--border)] p-2 text-xs"
-                  >
-                    <div className="font-medium">{d.name}</div>
-                    <div className="text-[var(--muted-foreground)]">
-                      CSS {d.width}×{d.height} · DPR {d.dpr}
-                      {d.physicalWidth
-                        ? ` · Physical ${d.physicalWidth}×${d.physicalHeight}`
-                        : ""}
-                    </div>
-                    {d.estimated && <Badge variant="warning">Estimated</Badge>}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {panel === "results" && (
-              <div className="space-y-3">
-                {!results && (
-                  <p className="text-xs text-[var(--muted-foreground)]">
-                    Run the responsive analyzer to inspect overflow, clipping, nav, forms, and
-                    layout issues across breakpoints.
-                  </p>
-                )}
-                {results?.map((r) => (
-                  <div key={r.width} className="rounded-md border border-[var(--border)] p-2">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-xs font-semibold">{r.width}px</span>
-                      <Button size="sm" variant="ghost" onClick={() => retestViewport(r.width)}>
-                        Retest
-                      </Button>
-                    </div>
-                    <div className="mb-2 flex flex-wrap gap-1">
-                      {Object.entries(r.summary).map(([k, v]) => (
-                        <Badge
-                          key={k}
-                          variant={
-                            k === "FAIL"
-                              ? "danger"
-                              : k === "WARNING"
-                                ? "warning"
-                                : k === "PASS"
-                                  ? "success"
-                                  : "info"
-                          }
-                        >
-                          {k} {v}
-                        </Badge>
-                      ))}
-                    </div>
-                    <ul className="space-y-2">
-                      {r.issues
-                        .filter((i) => i.status !== "PASS")
-                        .slice(0, 8)
-                        .map((issue, idx) => (
-                          <li key={idx} className="text-[11px]">
+          <Card>
+            <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>Check for layout problems (optional)</CardTitle>
+                <CardDescription>
+                  Opens the page in a real browser at your selected device widths and looks for
+                  sideways scrolling, cut-off content, tiny text and buttons that are hard to tap.
+                </CardDescription>
+              </div>
+              <Button onClick={runAnalyzer} disabled={analyzing || devices.length === 0}>
+                {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+                {analyzing ? "Checking…" : "Check layout"}
+              </Button>
+            </CardHeader>
+            {results ? (
+              <CardContent className="space-y-3">
+                {results.map((r) => {
+                  const problems = r.issues.filter((i) => i.status !== "PASS");
+                  return (
+                    <div key={r.width} className="rounded-md border border-[var(--border)] p-3">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold">{r.width}px wide</span>
+                        {Object.entries(r.summary).map(([k, v]) =>
+                          v ? (
                             <Badge
+                              key={k}
                               variant={
-                                issue.status === "FAIL"
-                                  ? "danger"
-                                  : issue.status === "WARNING"
-                                    ? "warning"
-                                    : "info"
+                                k === "FAIL" ? "danger" : k === "WARNING" ? "warning" : k === "PASS" ? "success" : "info"
                               }
                             >
-                              {issue.status}
-                            </Badge>{" "}
-                            <span className="font-mono">{issue.selector}</span>
-                            <div>{issue.description}</div>
-                            <div className="text-[var(--muted-foreground)]">
-                              {issue.suggestion}
-                            </div>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            )}
-            {panel === "inspect" && (
-              <div className="space-y-2 text-xs text-[var(--muted-foreground)]">
-                <p>
-                  <strong className="text-[var(--foreground)]">Active URL:</strong>{" "}
-                  {activeUrl || "—"}
-                </p>
-                <p>
-                  Iframe previews use sandbox permissions for scripts/forms. Screenshots use
-                  Playwright Chromium with the device CSS viewport — not claimed as real Safari
-                  or device hardware.
-                </p>
-                <p>
-                  Prefer screenshots when sites block embedding. Analyzer results include CSS
-                  selector hints and remediation suggestions.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {fullscreenDevice && activeUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="max-h-full overflow-auto rounded-xl bg-[var(--card)] p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium">{fullscreenDevice.name}</span>
-              <Button size="sm" variant="outline" onClick={() => setFullscreenId(null)}>
-                Close
-              </Button>
-            </div>
-            <DeviceFrame device={fullscreenDevice} scale={0.7} orientation={orientation}>
-              <PreviewPane
-                url={activeUrl}
-                width={
-                  orientation === "portrait"
-                    ? fullscreenDevice.width
-                    : fullscreenDevice.height
-                }
-                height={
-                  orientation === "portrait"
-                    ? fullscreenDevice.height
-                    : fullscreenDevice.width
-                }
-                refreshKey={refreshKey}
-              />
-            </DeviceFrame>
-          </div>
-        </div>
+                              {v} {k.toLowerCase()}
+                            </Badge>
+                          ) : null
+                        )}
+                      </div>
+                      {problems.length === 0 ? (
+                        <p className="text-xs text-[var(--muted-foreground)]">No problems at this width.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {problems.slice(0, 8).map((issue, idx) => (
+                            <li key={idx} className="text-xs">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge
+                                  variant={
+                                    issue.status === "FAIL" ? "danger" : issue.status === "WARNING" ? "warning" : "info"
+                                  }
+                                >
+                                  {issue.status.toLowerCase()}
+                                </Badge>
+                                <span>{issue.description}</span>
+                              </div>
+                              {issue.selector ? (
+                                <code className="mt-1 block truncate text-[11px] text-[var(--muted-foreground)]">
+                                  {issue.selector}
+                                </code>
+                              ) : null}
+                              {issue.suggestion ? (
+                                <p className="text-[var(--muted-foreground)]">Tip: {issue.suggestion}</p>
+                              ) : null}
+                            </li>
+                          ))}
+                          {problems.length > 8 ? (
+                            <li className="text-xs text-[var(--muted-foreground)]">
+                              +{problems.length - 8} more
+                            </li>
+                          ) : null}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            ) : null}
+          </Card>
+        </>
       )}
     </div>
   );

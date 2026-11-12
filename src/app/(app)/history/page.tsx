@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Play, Smartphone } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,10 +18,8 @@ type Session = {
   type: string;
   target: string;
   status: string;
-  progress?: number;
   error?: string | null;
   createdAt: string;
-  completedAt?: string | null;
 };
 
 export default function HistoryPage() {
@@ -30,15 +31,14 @@ export default function HistoryPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
-      const res = await apiFetch<Session[] | { sessions: Session[] }>("/api/sessions");
+      const res = await apiFetch<Session[]>("/api/sessions");
       if (cancelled) return;
       if (!res.ok) {
         setError(res.error);
         setSessions([]);
       } else {
         setError(null);
-        setSessions(Array.isArray(res.data) ? res.data : res.data.sessions ?? []);
+        setSessions(Array.isArray(res.data) ? res.data : []);
       }
       setLoading(false);
     })();
@@ -47,75 +47,88 @@ export default function HistoryPage() {
     };
   }, []);
 
-  const filtered = sessions.filter((s) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return true;
-    return (
-      s.type.toLowerCase().includes(q) ||
-      s.target.toLowerCase().includes(q) ||
-      s.status.toLowerCase().includes(q)
-    );
-  });
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? sessions.filter(
+        (s) =>
+          s.type.toLowerCase().includes(q) ||
+          s.target.toLowerCase().includes(q) ||
+          s.status.toLowerCase().includes(q)
+      )
+    : sessions;
 
   return (
     <div>
       <PageHeader
-        title="Test History"
-        description="Full session history from /api/sessions."
+        title="History"
+        description="Your last 50 saved layout checks (from “Check layout” on Test Website)."
       />
 
-      <div className="mb-4">
-        <Input
-          placeholder="Filter by type, target, or status…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="max-w-md"
-        />
-      </div>
+      {sessions.length > 0 ? (
+        <div className="mb-4">
+          <Input
+            placeholder="Filter by website or status…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="max-w-md"
+          />
+        </div>
+      ) : null}
 
       {error ? (
         <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-          {error}
+          Couldn&apos;t load history: {error}
         </div>
       ) : null}
 
       {loading ? (
         <div className="space-y-2">
-          {Array.from({ length: 5 }).map((_, i) => (
+          {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-14 w-full" />
           ))}
         </div>
+      ) : sessions.length === 0 ? (
+        <EmptyState
+          icon={Smartphone}
+          title="No saved tests yet"
+          description="Open Test Website, launch a URL, then press “Check layout”. Each check is saved here."
+          action={
+            <Link href="/testing/responsive">
+              <Button>
+                <Play className="h-4 w-4" />
+                Test a website
+              </Button>
+            </Link>
+          }
+        />
       ) : filtered.length === 0 ? (
-        <EmptyState title="No history yet" description="Completed and failed sessions appear here." />
+        <EmptyState title="No matches" description="Try a different filter." />
       ) : (
         <Card>
-          <CardContent className="overflow-x-auto p-0">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="border-b border-[var(--border)] text-[var(--muted-foreground)]">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Type</th>
-                  <th className="px-5 py-3 font-medium">Target</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Created</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s) => (
-                  <tr key={s.id} className="border-b border-[var(--border)] last:border-0">
-                    <td className="px-5 py-3 font-medium">{s.type}</td>
-                    <td className="max-w-[320px] truncate px-5 py-3 text-[var(--muted-foreground)]">
-                      {s.target}
-                    </td>
-                    <td className="px-5 py-3">
-                      <StatusBadge status={s.status} />
-                    </td>
-                    <td className="px-5 py-3 text-[var(--muted-foreground)]">
-                      {formatDate(s.createdAt)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <CardContent className="p-0">
+            <ul className="divide-y divide-[var(--border)]">
+              {filtered.map((s) => (
+                <li key={s.id} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{s.target}</p>
+                    <p className="text-xs capitalize text-[var(--muted-foreground)]">
+                      {s.type} check · {formatDate(s.createdAt)}
+                    </p>
+                    {s.error ? (
+                      <p className="mt-1 text-xs text-red-600 dark:text-red-400">{s.error}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <StatusBadge status={s.status} />
+                    <Link href={`/testing/responsive?url=${encodeURIComponent(s.target)}`}>
+                      <Button size="sm" variant="outline">
+                        Test again
+                      </Button>
+                    </Link>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </CardContent>
         </Card>
       )}

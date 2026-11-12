@@ -1,100 +1,101 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Camera, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { apiFetch } from "@/lib/api/client";
 
 type ProbeState =
-  | { status: "idle" | "loading" }
+  | { status: "loading" }
   | { status: "blocked"; reason: string }
   | { status: "ok" };
+
+type ValidateResponse = {
+  embedding?: { allowed?: boolean; reason?: string };
+};
+
+const probeCache = new Map<string, Promise<ProbeState>>();
+
+function probeEmbedding(url: string, refreshKey: number): Promise<ProbeState> {
+  const key = `${refreshKey}::${url}`;
+  const cached = probeCache.get(key);
+  if (cached) return cached;
+  const promise = apiFetch<ValidateResponse>("/api/validate-url", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  }).then<ProbeState>((res) => {
+    if (!res.ok) return { status: "blocked", reason: res.error };
+    const embedding = res.data.embedding;
+    if (embedding && embedding.allowed === false) {
+      return {
+        status: "blocked",
+        reason:
+          embedding.reason ||
+          "This website blocks being shown inside other pages (X-Frame-Options or CSP).",
+      };
+    }
+    return { status: "ok" };
+  });
+  probeCache.set(key, promise);
+  if (probeCache.size > 50) {
+    const oldest = probeCache.keys().next().value;
+    if (oldest !== undefined) probeCache.delete(oldest);
+  }
+  return promise;
+}
 
 export function PreviewPane({
   url,
   width,
   height,
-  syncScroll,
-  scrollTop,
-  refreshKey,
+  refreshKey = 0,
+  onUseScreenshots,
 }: {
   url: string;
   width: number;
   height: number;
-  syncScroll?: boolean;
-  scrollTop?: number;
-  onScroll?: (top: number) => void;
   refreshKey?: number;
+  onUseScreenshots?: () => void;
 }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [probe, setProbe] = useState<ProbeState>({ status: "loading" });
+  const [probe, setProbe] = useState<{ key: string; state: ProbeState } | null>(null);
+  const key = `${refreshKey}::${url}`;
 
   useEffect(() => {
     let cancelled = false;
-    const run = async () => {
-      try {
-        const res = await fetch("/api/validate-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
-        const json = await res.json();
-        if (cancelled) return;
-        if (!json.ok) {
-          setProbe({ status: "blocked", reason: json.error || "URL validation failed" });
-          return;
-        }
-        const embedding = json.data?.embedding;
-        if (embedding && embedding.allowed === false) {
-          setProbe({
-            status: "blocked",
-            reason:
-              embedding.reason ||
-              "This website blocks iframe embedding (X-Frame-Options or CSP).",
-          });
-          return;
-        }
-        setProbe({ status: "ok" });
-      } catch {
-        if (!cancelled) {
-          setProbe({ status: "blocked", reason: "Could not validate URL for preview." });
-        }
-      }
-    };
-    void run();
+    void probeEmbedding(url, refreshKey).then((state) => {
+      if (!cancelled) setProbe({ key, state });
+    });
     return () => {
       cancelled = true;
     };
-  }, [url, refreshKey]);
+  }, [url, refreshKey, key]);
 
-  useEffect(() => {
-    if (!syncScroll || scrollTop == null || !iframeRef.current) return;
-    try {
-      iframeRef.current.contentWindow?.scrollTo({ top: scrollTop });
-    } catch {
-      /* cross-origin */
-    }
-  }, [scrollTop, syncScroll]);
+  const state: ProbeState = probe && probe.key === key ? probe.state : { status: "loading" };
 
-  if (probe.status === "blocked") {
+  if (state.status === "blocked") {
     return (
       <div
-        className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[var(--muted)] p-4 text-center"
+        className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[var(--muted)] p-6 text-center"
         style={{ width, height }}
       >
-        <AlertTriangle className="h-8 w-8 text-amber-500" />
-        <p className="text-xs font-medium">Iframe preview unavailable</p>
-        <p className="max-w-[240px] text-[11px] text-[var(--muted-foreground)]">{probe.reason}</p>
-        <p className="max-w-[260px] text-[11px] text-[var(--muted-foreground)]">
-          Use Playwright screenshot capture or Browser Tester for a real rendered result.
-          DeviceLab never pretends a blocked iframe is rendering.
+        <AlertTriangle className="h-10 w-10 text-amber-500" />
+        <p className="text-base font-medium">Live preview not allowed by this site</p>
+        <p className="max-w-[320px] text-sm text-[var(--muted-foreground)]">{state.reason}</p>
+        <p className="max-w-[320px] text-sm text-[var(--muted-foreground)]">
+          This is normal for many big sites. Use real browser screenshots instead — we never fake a
+          preview.
         </p>
         <div className="flex flex-wrap justify-center gap-2">
-          <Badge variant="warning">X-Frame / CSP</Badge>
+          {onUseScreenshots ? (
+            <Button onClick={onUseScreenshots}>
+              <Camera className="h-4 w-4" />
+              Take screenshots
+            </Button>
+          ) : null}
           <a href={url} target="_blank" rel="noopener noreferrer">
-            <Button size="sm" variant="outline">
-              <ExternalLink className="h-3 w-3" />
-              Open tab
+            <Button variant="outline">
+              <ExternalLink className="h-4 w-4" />
+              Open in new tab
             </Button>
           </a>
         </div>
@@ -104,16 +105,14 @@ export function PreviewPane({
 
   return (
     <div className="relative" style={{ width, height }}>
-      {probe.status !== "ok" && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--muted)] text-xs text-[var(--muted-foreground)]">
-          <RefreshCw className="mr-2 h-3.5 w-3.5 animate-spin" />
-          Checking embed…
+      {state.status === "loading" ? (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--muted)] text-sm text-[var(--muted-foreground)]">
+          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+          Loading preview…
         </div>
-      )}
-      {probe.status === "ok" && (
+      ) : (
         <iframe
-          key={`${url}-${refreshKey}`}
-          ref={iframeRef}
+          key={key}
           src={url}
           title={`Preview ${width}x${height}`}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"

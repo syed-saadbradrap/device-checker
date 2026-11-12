@@ -2,42 +2,23 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  Activity,
-  Camera,
-  FileText,
-  FolderKanban,
-  Gauge,
-  GitCompare,
-  Mail,
-  Smartphone,
-} from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useRouter } from "next/navigation";
+import { ArrowRight, Camera, Gauge, History, Mail, Play, Smartphone } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils";
 
 type StatsData = {
   counts?: {
-    projects?: number;
     sessions?: number;
     screenshots?: number;
-    reports?: number;
-    completedSessions?: number;
-    failedSessions?: number;
   };
-  sessionsByType?: Array<{ type: string; count: number }>;
   recentSessions?: Array<{
     id: string;
     type: string;
@@ -47,34 +28,36 @@ type StatsData = {
   }>;
 };
 
-const QUICK_ACTIONS = [
+const ACTIONS = [
   {
-    title: "Responsive Tester",
+    title: "Test Website",
     href: "/testing/responsive",
-    description: "Multi-device viewport workspace",
+    description: "See your site on phone, tablet and desktop at once.",
     icon: Smartphone,
   },
   {
-    title: "Email Tester",
+    title: "Test Email",
     href: "/email/tester",
-    description: "Sanitize and preview HTML email",
+    description: "Paste email HTML, preview it safely and find problems.",
     icon: Mail,
   },
   {
-    title: "Screenshot Compare",
-    href: "/visual/compare",
-    description: "Diff two captures or uploads",
-    icon: GitCompare,
+    title: "Run Audit",
+    href: "/audits",
+    description: "Check speed, accessibility and SEO for any public URL.",
+    icon: Gauge,
   },
   {
-    title: "Performance",
-    href: "/audits/performance",
-    description: "Run a real Lighthouse audit",
-    icon: Gauge,
+    title: "Take Screenshot",
+    href: "/visual/screenshots",
+    description: "Capture a real browser screenshot or compare two images.",
+    icon: Camera,
   },
 ];
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const [quickUrl, setQuickUrl] = useState("");
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +65,6 @@ export default function DashboardPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       const res = await apiFetch<StatsData>("/api/stats");
       if (cancelled) return;
       if (!res.ok) {
@@ -99,138 +81,129 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const sessionCount = stats?.counts?.sessions ?? 0;
-  const projectCount = stats?.counts?.projects ?? 0;
-  const reportCount = stats?.counts?.reports ?? 0;
-  const screenshotCount = stats?.counts?.screenshots ?? 0;
-  const byType = stats?.sessionsByType ?? [];
   const recent = stats?.recentSessions ?? [];
-  const hasTests = sessionCount > 0 || byType.some((b) => b.count > 0);
+  const sessionCount = stats?.counts?.sessions ?? 0;
+  const screenshotCount = stats?.counts?.screenshots ?? 0;
+
+  function quickTest(e: React.FormEvent) {
+    e.preventDefault();
+    const value = quickUrl.trim();
+    const target = value
+      ? `/testing/responsive?url=${encodeURIComponent(value)}`
+      : "/testing/responsive";
+    router.push(target);
+  }
 
   return (
-    <div>
+    <div className="mx-auto max-w-5xl">
       <PageHeader
-        title="Overview"
-        description="Real activity from your DeviceLab database — never fabricated scores."
+        title="What do you want to test?"
+        description="Pick one of the options below. Every result comes from a real check — nothing is made up."
       />
 
-      {error ? (
-        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
+      <Card className="mb-6">
+        <CardContent className="p-5">
+          <form onSubmit={quickTest} className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              value={quickUrl}
+              onChange={(e) => setQuickUrl(e.target.value)}
+              placeholder="Paste a website, e.g. example.com"
+              aria-label="Website URL"
+              className="h-11 flex-1 text-base"
+            />
+            <Button type="submit" size="lg" className="h-11">
+              <Play className="h-4 w-4" />
+              Test website
+            </Button>
+          </form>
+          <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+            Fastest way to start: paste a URL and we&apos;ll open it on popular devices.
+          </p>
+        </CardContent>
+      </Card>
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "Sessions", value: sessionCount, icon: Activity },
-          { label: "Projects", value: projectCount, icon: FolderKanban },
-          { label: "Reports", value: reportCount, icon: FileText },
-          { label: "Screenshots", value: screenshotCount, icon: Camera },
-        ].map((item) => (
-          <Card key={item.label}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardDescription>{item.label}</CardDescription>
-              <item.icon className="h-4 w-4 text-[var(--muted-foreground)]" />
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <Skeleton className="h-8 w-16" />
-              ) : (
-                <p className="text-2xl font-semibold tabular-nums">{item.value}</p>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {QUICK_ACTIONS.map((action) => (
+      <div className="mb-8 grid gap-4 sm:grid-cols-2">
+        {ACTIONS.map((action) => (
           <Link key={action.href} href={action.href} className="group">
             <Card className="h-full transition-colors group-hover:border-[var(--ring)]">
-              <CardHeader>
-                <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--secondary)]">
-                  <action.icon className="h-4 w-4" />
+              <CardHeader className="flex flex-row items-start gap-4 space-y-0">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-foreground)]">
+                  <action.icon className="h-5 w-5" />
                 </div>
-                <CardTitle>{action.title}</CardTitle>
-                <CardDescription>{action.description}</CardDescription>
+                <div className="min-w-0 flex-1">
+                  <CardTitle className="flex items-center gap-1 text-base">
+                    {action.title}
+                    <ArrowRight className="h-4 w-4 opacity-0 transition-opacity group-hover:opacity-100" />
+                  </CardTitle>
+                  <CardDescription className="mt-1">{action.description}</CardDescription>
+                </div>
               </CardHeader>
             </Card>
           </Link>
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Sessions by type</CardTitle>
-            <CardDescription>
-              {hasTests
-                ? "Counts from stored TestSession records"
-                : "Chart structure only — no tests recorded yet"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-56 w-full" />
-            ) : !hasTests ? (
-              <EmptyState title="No tests yet" description="Run a responsive, audit, or browser test to populate this chart." />
-            ) : (
-              <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={byType}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                    <XAxis dataKey="type" tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke="var(--muted-foreground)" />
-                    <RechartsTooltip
-                      contentStyle={{
-                        background: "var(--card)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 8,
-                      }}
-                    />
-                    <Bar dataKey="count" fill="var(--foreground)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
             <CardTitle>Recent activity</CardTitle>
             <CardDescription>
-              Latest sessions from the database
+              {loading
+                ? "Loading…"
+                : sessionCount > 0 || screenshotCount > 0
+                  ? `${sessionCount} saved test${sessionCount === 1 ? "" : "s"} · ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"}`
+                  : "Nothing saved yet"}
             </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-              </div>
-            ) : recent.length === 0 ? (
-              <EmptyState title="No tests yet" description="Completed sessions will appear here." />
-            ) : (
-              <ul className="divide-y divide-[var(--border)]">
-                {recent.slice(0, 8).map((s) => (
-                  <li key={s.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{s.type}</p>
-                      <p className="truncate text-[var(--muted-foreground)]">{s.target}</p>
-                    </div>
-                    <div className="shrink-0 text-right text-xs text-[var(--muted-foreground)]">
-                      <p>{s.status}</p>
-                      <p>{formatDate(s.createdAt)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+          {recent.length > 0 ? (
+            <Link href="/history">
+              <Button variant="outline" size="sm">
+                <History className="h-3.5 w-3.5" />
+                View all
+              </Button>
+            </Link>
+          ) : null}
+        </CardHeader>
+        <CardContent>
+          {error ? (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              Couldn&apos;t load activity: {error}
+            </p>
+          ) : loading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : recent.length === 0 ? (
+            <EmptyState
+              title="No tests yet"
+              description="Start with “Test Website” above. Responsive checks you run will show up here."
+              action={
+                <Link href="/testing/responsive">
+                  <Button>
+                    <Smartphone className="h-4 w-4" />
+                    Test a website
+                  </Button>
+                </Link>
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-[var(--border)]">
+              {recent.map((s) => (
+                <li key={s.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{s.target}</p>
+                    <p className="text-xs capitalize text-[var(--muted-foreground)]">
+                      {s.type} check · {formatDate(s.createdAt)}
+                    </p>
+                  </div>
+                  <StatusBadge status={s.status} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
