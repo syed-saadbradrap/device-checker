@@ -1,5 +1,7 @@
 import sanitizeHtml from "sanitize-html";
 
+export { EMAIL_CLIENT_PROFILES } from "@/lib/email/profiles";
+
 /** Strip scripts and dangerous constructs for email HTML preview. */
 export function sanitizeEmailHtml(html: string): string {
   return sanitizeHtml(html, {
@@ -52,73 +54,15 @@ export function sanitizeEmailHtml(html: string): string {
       font: ["color", "face", "size"],
     },
     allowedSchemes: ["http", "https", "mailto", "cid", "data"],
-    // Email HTML often includes <style>; we still strip scripts/handlers.
     allowVulnerableTags: true,
     disallowedTagsMode: "discard",
-    // Never allow script/event handlers
     allowedScriptDomains: [],
     allowedScriptHostnames: [],
     transformTags: {
-      a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" }),
+      a: sanitizeHtml.simpleTransform("a", {
+        rel: "noopener noreferrer",
+        target: "_blank",
+      }),
     },
   });
 }
-
-export const EMAIL_CLIENT_PROFILES = [
-  {
-    id: "gmail-desktop",
-    name: "Gmail Desktop",
-    width: 680,
-    height: 900,
-    simulated: true,
-    notes: "Simulated Gmail web clipping width (~680px content)",
-  },
-  {
-    id: "gmail-mobile",
-    name: "Gmail Mobile",
-    width: 375,
-    height: 812,
-    simulated: true,
-    notes: "Simulated mobile Gmail viewport",
-  },
-  {
-    id: "apple-mail-macos",
-    name: "Apple Mail macOS",
-    width: 800,
-    height: 1000,
-    simulated: true,
-    notes: "Simulated — not actual Apple Mail rendering engine",
-  },
-  {
-    id: "apple-mail-ios",
-    name: "Apple Mail iOS",
-    width: 390,
-    height: 844,
-    simulated: true,
-    notes: "Simulated — not actual iOS Mail rendering engine",
-  },
-  {
-    id: "outlook-desktop",
-    name: "Outlook Desktop",
-    width: 600,
-    height: 900,
-    simulated: true,
-    notes: "Simulated Word-like constraints; Outlook uses Word HTML engine in real clients",
-  },
-  {
-    id: "outlook-web",
-    name: "Outlook Web",
-    width: 680,
-    height: 900,
-    simulated: true,
-    notes: "Simulated Outlook on the web layout width",
-  },
-  {
-    id: "yahoo-mail",
-    name: "Yahoo Mail",
-    width: 600,
-    height: 900,
-    simulated: true,
-    notes: "Simulated Yahoo Mail content width",
-  },
-] as const;

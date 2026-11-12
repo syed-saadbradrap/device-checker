@@ -161,6 +161,35 @@ function dedupeFailed(items: CaptureResult["failedRequests"]) {
   });
 }
 
+/** Load a page in Chromium and return post-navigation HTML (bypasses many bot walls). */
+export async function capturePageHtml(opts: {
+  url: string;
+  width?: number;
+  height?: number;
+  userAgent?: string;
+}): Promise<{ html: string; finalUrl: string; title: string }> {
+  const { context } = await createContext("chromium", {
+    url: opts.url,
+    width: opts.width ?? 1280,
+    height: opts.height ?? 800,
+    dpr: 1,
+    userAgent: opts.userAgent,
+  });
+  const page = await context.newPage();
+  try {
+    await navigateSafely(page, opts.url);
+    await page.waitForLoadState("networkidle", { timeout: Math.min(TIMEOUT, 12000) }).catch(() => undefined);
+    const html = await page.content();
+    return {
+      html,
+      finalUrl: page.url(),
+      title: await page.title(),
+    };
+  } finally {
+    await context.close();
+  }
+}
+
 export async function analyzePageWithScript<T>(
   opts: CaptureOptions & { script: string }
 ): Promise<{ result: T; capture?: CaptureResult }> {

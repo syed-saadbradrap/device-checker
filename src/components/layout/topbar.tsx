@@ -2,7 +2,6 @@
 
 import { Play, Search } from "lucide-react";
 import Link from "next/link";
-import { ThemeToggle } from "@/components/layout/theme-toggle";
 
 export function Topbar({ onOpenCommand }: { onOpenCommand: () => void }) {
   return (
@@ -25,7 +24,6 @@ export function Topbar({ onOpenCommand }: { onOpenCommand: () => void }) {
           <Play className="h-3.5 w-3.5" />
           Test Website
         </Link>
-        <ThemeToggle />
       </div>
     </header>
   );

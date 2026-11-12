@@ -29,21 +29,34 @@ export default function HistoryPage() {
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
     (async () => {
-      const res = await apiFetch<Session[]>("/api/sessions");
-      if (cancelled) return;
-      if (!res.ok) {
-        setError(res.error);
-        setSessions([]);
-      } else {
-        setError(null);
-        setSessions(Array.isArray(res.data) ? res.data : []);
+      try {
+        const res = await apiFetch<Session[] | { sessions: Session[] }>("/api/sessions");
+        if (!alive) return;
+        if (!res.ok) {
+          setError(res.error);
+          setSessions([]);
+        } else {
+          setError(null);
+          const list = Array.isArray(res.data)
+            ? res.data
+            : Array.isArray(res.data.sessions)
+              ? res.data.sessions
+              : [];
+          setSessions(list);
+        }
+      } catch {
+        if (alive) {
+          setError("Could not load history");
+          setSessions([]);
+        }
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     })();
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, []);
 

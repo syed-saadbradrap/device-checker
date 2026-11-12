@@ -10,7 +10,6 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils";
 
@@ -26,6 +25,8 @@ type StatsData = {
     status: string;
     createdAt: string;
   }>;
+  unavailable?: boolean;
+  message?: string;
 };
 
 const ACTIONS = [
@@ -59,25 +60,28 @@ export default function DashboardPage() {
   const router = useRouter();
   const [quickUrl, setQuickUrl] = useState("");
   const [stats, setStats] = useState<StatsData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
+
     (async () => {
-      const res = await apiFetch<StatsData>("/api/stats");
-      if (cancelled) return;
-      if (!res.ok) {
-        setError(res.error);
-        setStats(null);
-      } else {
+      try {
+        const res = await apiFetch<StatsData>("/api/stats");
+        if (!alive) return;
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
         setError(null);
         setStats(res.data);
+      } catch {
+        if (alive) setError("Could not load activity");
       }
-      setLoading(false);
     })();
+
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, []);
 
@@ -148,8 +152,8 @@ export default function DashboardPage() {
           <div>
             <CardTitle>Recent activity</CardTitle>
             <CardDescription>
-              {loading
-                ? "Loading…"
+              {!stats && !error
+                ? "Checking saved tests…"
                 : sessionCount > 0 || screenshotCount > 0
                   ? `${sessionCount} saved test${sessionCount === 1 ? "" : "s"} · ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"}`
                   : "Nothing saved yet"}
@@ -165,15 +169,13 @@ export default function DashboardPage() {
           ) : null}
         </CardHeader>
         <CardContent>
-          {error ? (
-            <p className="text-sm text-red-600 dark:text-red-400">
-              Couldn&apos;t load activity: {error}
-            </p>
-          ) : loading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+          {error || stats?.unavailable ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+              {stats?.message ||
+                "Activity history is temporarily unavailable. You can still run tests above."}
             </div>
+          ) : !stats ? (
+            <p className="text-sm text-[var(--muted-foreground)]">Checking saved tests…</p>
           ) : recent.length === 0 ? (
             <EmptyState
               title="No tests yet"

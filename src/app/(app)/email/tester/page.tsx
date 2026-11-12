@@ -11,7 +11,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { EMAIL_CLIENT_PROFILES } from "@/lib/email/sanitize";
+import {
+  DEFAULT_EMAIL_PROFILE_ID,
+  EMAIL_CLIENT_PROFILES,
+  LATEST_EMAIL_DEVICE_WIDTHS,
+} from "@/lib/email/profiles";
+import { buildEmailPreviewHtml, emailHasDarkModeCss } from "@/lib/email/preview";
+import { cn } from "@/lib/utils";
 import { apiFetch } from "@/lib/api/client";
 import { downloadBlob } from "@/lib/utils";
 
@@ -45,28 +51,45 @@ type AnalyzeResponse = {
 
 type View = "preview" | "issues" | "widths";
 
-const WIDTHS = [320, 375, 600, 680] as const;
+const LATEST_PHONES = EMAIL_CLIENT_PROFILES.filter((p) => p.group === "latest-phone");
+const EMAIL_APPS = EMAIL_CLIENT_PROFILES.filter((p) => p.group === "email-app");
 
 const SAMPLE_HTML = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
   <title>Welcome</title>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .bg-page { background:#0f0f10 !important; }
+      .bg-card { background:#1f1f22 !important; }
+      .text-title { color:#f4f4f5 !important; }
+      .text-body { color:#d4d4d8 !important; }
+      .text-muted { color:#a1a1aa !important; }
+      .btn { background:#f4f4f5 !important; color:#111111 !important; }
+      .link { color:#93c5fd !important; }
+    }
+  </style>
 </head>
-<body style="margin:0;background:#f4f4f5;font-family:Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<body class="bg-page" style="margin:0;background:#f4f4f5;font-family:Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="bg-page" style="background:#f4f4f5">
     <tr>
       <td align="center" style="padding:24px">
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" class="bg-card" style="max-width:600px;width:100%;background:#ffffff;border-radius:8px">
           <tr>
             <td style="padding:32px">
-              <h1 style="margin:0 0 12px;font-size:24px;color:#111">Welcome aboard!</h1>
-              <p style="margin:0 0 20px;font-size:16px;line-height:24px;color:#444">
+              <h1 class="text-title" style="margin:0 0 12px;font-size:24px;color:#111">Welcome aboard!</h1>
+              <p class="text-body" style="margin:0 0 20px;font-size:16px;line-height:24px;color:#444">
                 Thanks for signing up. Click the button below to confirm your email.
               </p>
-              <a href="https://example.com/confirm" style="display:inline-block;background:#111;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">Confirm email</a>
-              <p style="margin:24px 0 0;font-size:12px;color:#888;display:flex">You received this because you signed up at example.com.</p>
+              <a href="https://example.com/confirm" class="btn" style="display:inline-block;background:#111;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none">Confirm email</a>
+              <p class="text-muted" style="margin:24px 0 0;font-size:12px;color:#888">
+                You received this because you signed up at example.com.
+                <a href="https://example.com/unsubscribe" class="link">Unsubscribe</a>
+              </p>
             </td>
           </tr>
         </table>
@@ -76,24 +99,71 @@ const SAMPLE_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
+function DarkPreviewToggle({
+  on,
+  hasDarkCss,
+  onToggle,
+}: {
+  on: boolean;
+  hasDarkCss: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <>
+      <Button
+        variant={on ? "default" : "outline"}
+        size="sm"
+        aria-pressed={on}
+        onClick={onToggle}
+        title={on ? "Switch back to a light email client" : "Simulate a dark-mode email client"}
+      >
+        <Moon className={cn("h-3.5 w-3.5", on && "fill-current")} />
+        Dark preview: {on ? "On" : "Off"}
+      </Button>
+      {on ? (
+        <Badge className="bg-zinc-900 text-zinc-100 ring-1 ring-zinc-700">Dark client</Badge>
+      ) : null}
+      {on && !hasDarkCss ? (
+        <Badge variant="info">No dark-mode CSS in email</Badge>
+      ) : null}
+    </>
+  );
+}
+
+function DarkPreviewNote({ on, hasDarkCss }: { on: boolean; hasDarkCss: boolean }) {
+  if (!on) return null;
+  return (
+    <p className="text-xs text-[var(--muted-foreground)]">
+      {hasDarkCss
+        ? "Dark preview applies your email’s @media (prefers-color-scheme: dark) styles on a dark email-client background, regardless of your computer’s theme."
+        : "This email has no @media (prefers-color-scheme: dark) styles, so it is shown as written on a dark email-client background. Real apps such as Gmail or Outlook may still recolor it automatically."}
+    </p>
+  );
+}
+
 export default function EmailTesterPage() {
   const [html, setHtml] = useState("");
   const [sanitized, setSanitized] = useState("");
   const [analysis, setAnalysis] = useState<EmailAnalysis | null>(null);
-  const [profileId, setProfileId] = useState<string>(EMAIL_CLIENT_PROFILES[0].id);
+  const [profileId, setProfileId] = useState<string>(DEFAULT_EMAIL_PROFILE_ID);
   const [darkPreview, setDarkPreview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("preview");
 
-  const profile = EMAIL_CLIENT_PROFILES.find((p) => p.id === profileId) ?? EMAIL_CLIENT_PROFILES[0];
+  const profile =
+    EMAIL_CLIENT_PROFILES.find((p) => p.id === profileId) ?? EMAIL_CLIENT_PROFILES[0];
 
-  const body = sanitized || html;
-  const previewHtml = useMemo(() => {
-    if (!body) return "";
-    if (!darkPreview) return body;
-    return `<div style="background:#111;color:#f5f5f5;min-height:100%;padding:8px">${body}</div>`;
-  }, [body, darkPreview]);
+  const sourceHtml = sanitized || html;
+  const previewHtml = useMemo(
+    () => buildEmailPreviewHtml(sourceHtml, darkPreview),
+    [sourceHtml, darkPreview]
+  );
+  const hasDarkCss = useMemo(() => emailHasDarkModeCss(sourceHtml), [sourceHtml]);
+  const toggleDark = () => setDarkPreview((v) => !v);
+  const frameClass = darkPreview
+    ? "border-zinc-800 bg-[#1a1a1a]"
+    : "border-[var(--border)] bg-[#f4f4f5]";
 
   function updateHtml(next: string) {
     setHtml(next);
@@ -102,28 +172,39 @@ export default function EmailTesterPage() {
     setError(null);
   }
 
-  async function analyze() {
+  async function analyze(nextView: View = "issues") {
     if (!html.trim()) {
       toast.error("Paste or upload HTML first");
       return;
     }
     setLoading(true);
     setError(null);
-    const res = await apiFetch<AnalyzeResponse>("/api/email/analyze", {
-      method: "POST",
-      body: JSON.stringify({ html }),
-    });
-    setLoading(false);
-    if (!res.ok) {
-      setError(res.error);
-      toast.error(res.error);
-      return;
+    try {
+      const res = await apiFetch<AnalyzeResponse>("/api/email/analyze", {
+        method: "POST",
+        body: JSON.stringify({ html }),
+      });
+      if (!res.ok) {
+        setError(res.error);
+        toast.error(res.error);
+        return;
+      }
+      setSanitized(res.data.sanitizedHtml || html);
+      setAnalysis(res.data.analysis);
+      setView(nextView);
+      const count = res.data.analysis.issues.length;
+      toast.success(
+        count
+          ? `Found ${count} thing${count === 1 ? "" : "s"} to review`
+          : "No issues found"
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Email check failed";
+      setError(message);
+      toast.error(message);
+    } finally {
+      setLoading(false);
     }
-    setSanitized(res.data.sanitizedHtml || html);
-    setAnalysis(res.data.analysis);
-    setView("issues");
-    const count = res.data.analysis.issues.length;
-    toast.success(count ? `Found ${count} thing${count === 1 ? "" : "s"} to review` : "No issues found");
   }
 
   function onUpload(file: File | null) {
@@ -133,14 +214,27 @@ export default function EmailTesterPage() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => updateHtml(String(reader.result || ""));
+    reader.onload = () => {
+      updateHtml(String(reader.result || ""));
+      setView("preview");
+      toast.success("HTML loaded — preview updated");
+    };
     reader.onerror = () => toast.error("Could not read file");
     reader.readAsText(file);
   }
 
   function downloadHtml() {
-    if (!body) return;
-    downloadBlob(new Blob([body], { type: "text/html;charset=utf-8" }), "email-preview.html");
+    if (!sourceHtml) return;
+    downloadBlob(
+      new Blob([sourceHtml], { type: "text/html;charset=utf-8" }),
+      "email-preview.html"
+    );
+  }
+
+  function loadSample() {
+    updateHtml(SAMPLE_HTML);
+    setView("preview");
+    toast.success("Sample loaded — preview is on the right");
   }
 
   const issueCount = analysis?.issues.length ?? 0;
@@ -149,14 +243,14 @@ export default function EmailTesterPage() {
     <div>
       <PageHeader
         title="Test Email"
-        description="Paste your email HTML, then press Check email. Preview runs safely with scripts turned off."
+        description="Paste HTML → see live preview → press Check email for issues. Scripts are blocked."
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <Card className="h-fit">
           <CardHeader>
             <CardTitle>1. Your email HTML</CardTitle>
-            <CardDescription>Paste code, upload an .html file, or try the sample.</CardDescription>
+            <CardDescription>Paste code, upload a file, or load the sample.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Textarea
@@ -167,7 +261,7 @@ export default function EmailTesterPage() {
               aria-label="Email HTML"
             />
             <div className="flex flex-wrap gap-2">
-              <Button onClick={analyze} disabled={loading || !html.trim()}>
+              <Button onClick={() => analyze("issues")} disabled={loading || !html.trim()}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 Check email
               </Button>
@@ -185,7 +279,7 @@ export default function EmailTesterPage() {
                 />
               </label>
               {!html ? (
-                <Button variant="outline" onClick={() => updateHtml(SAMPLE_HTML)}>
+                <Button variant="outline" onClick={loadSample}>
                   <FileText className="h-4 w-4" />
                   Load sample
                 </Button>
@@ -220,10 +314,16 @@ export default function EmailTesterPage() {
             />
           </CardHeader>
           <CardContent>
-            {!body ? (
+            {!sourceHtml ? (
               <EmptyState
                 title="Nothing to show yet"
-                description="Paste email HTML on the left (or click “Load sample”) to see a preview here."
+                description="Paste email HTML on the left, or click “Load sample”, to see a live preview."
+                action={
+                  <Button variant="outline" onClick={loadSample}>
+                    <FileText className="h-4 w-4" />
+                    Load sample
+                  </Button>
+                }
               />
             ) : view === "preview" ? (
               <div className="space-y-3">
@@ -231,37 +331,56 @@ export default function EmailTesterPage() {
                   <select
                     value={profileId}
                     onChange={(e) => setProfileId(e.target.value)}
-                    className="h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm"
-                    aria-label="Email client width"
+                    className="h-9 max-w-full rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-sm"
+                    aria-label="Device or email client width"
                   >
-                    {EMAIL_CLIENT_PROFILES.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} · {p.width}px
-                      </option>
-                    ))}
+                    <optgroup label="Latest phones (2026)">
+                      {LATEST_PHONES.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.width}×{p.height}
+                          {p.estimated ? " *" : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Email apps">
+                      {EMAIL_APPS.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.width}px
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
-                  <Button
-                    variant={darkPreview ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setDarkPreview((v) => !v)}
-                  >
-                    <Moon className="h-3.5 w-3.5" />
-                    Dark background
-                  </Button>
+                  <DarkPreviewToggle on={darkPreview} hasDarkCss={hasDarkCss} onToggle={toggleDark} />
                   <Badge variant="warning">Simulated width</Badge>
+                  {sanitized ? <Badge variant="success">Sanitized</Badge> : null}
                 </div>
                 <p className="text-xs text-[var(--muted-foreground)]">
-                  Shows your email at {profile.name}&apos;s typical width. It is not the real{" "}
-                  {profile.name} rendering engine.
-                  {sanitized ? " Showing the cleaned (sanitized) HTML." : ""}
+                  Showing <strong>{profile.name}</strong> at {profile.width}×{profile.height} px
+                  {profile.estimated ? " (estimated)" : ""}. This is a simulated screen width, not
+                  the real Apple Mail or Gmail rendering engine. Scripts are disabled.
+                  {profile.group === "latest-phone"
+                    ? " Default is the latest iPhone Pro."
+                    : ""}
                 </p>
-                <div className="overflow-auto rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-3">
+                <DarkPreviewNote on={darkPreview} hasDarkCss={hasDarkCss} />
+                <div
+                  className={cn(
+                    "overflow-auto rounded-lg border p-3 transition-colors",
+                    frameClass
+                  )}
+                >
                   <iframe
+                    key={`${profileId}-${darkPreview}-${sourceHtml.length}`}
                     title="Email preview"
                     srcDoc={previewHtml}
-                    sandbox="allow-same-origin"
-                    className="mx-auto block bg-white"
-                    style={{ width: profile.width, height: Math.min(profile.height, 720), maxWidth: "100%" }}
+                    sandbox=""
+                    className="mx-auto block rounded-md shadow-sm"
+                    style={{
+                      width: profile.width,
+                      height: Math.min(profile.height, 720),
+                      maxWidth: "100%",
+                      border: 0,
+                    }}
                   />
                 </div>
               </div>
@@ -269,9 +388,9 @@ export default function EmailTesterPage() {
               !analysis ? (
                 <EmptyState
                   title="Not checked yet"
-                  description="Press “Check email” on the left to scan for layout, image, link and CSS problems."
+                  description="Press “Check email” to scan for layout, image, link and CSS problems."
                   action={
-                    <Button onClick={analyze} disabled={loading}>
+                    <Button onClick={() => analyze("issues")} disabled={loading || !html.trim()}>
                       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                       Check email
                     </Button>
@@ -323,39 +442,49 @@ export default function EmailTesterPage() {
                       ))}
                     </ul>
                   )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setView("preview")}>
+                      Back to preview
+                    </Button>
+                  </div>
                   <p className="text-xs text-[var(--muted-foreground)]">{analysis.simulatedNote}</p>
                 </div>
               )
             ) : (
               <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <DarkPreviewToggle on={darkPreview} hasDarkCss={hasDarkCss} onToggle={toggleDark} />
+                </div>
                 <p className="text-xs text-[var(--muted-foreground)]">
-                  Your email side by side at common widths. These are{" "}
-                  <strong>simulated widths</strong>, not real Gmail/Outlook/Apple Mail engines.
+                  Side by side at the latest phone and inbox widths. These are simulated screen
+                  widths, not the real Gmail, Outlook or Apple Mail rendering engines.
                 </p>
+                <DarkPreviewNote on={darkPreview} hasDarkCss={hasDarkCss} />
                 <div className="overflow-x-auto">
                   <div className="flex min-w-max gap-4 pb-2">
-                    {WIDTHS.map((width) => {
-                      const names = EMAIL_CLIENT_PROFILES.filter((p) => p.width === width)
-                        .map((p) => p.name)
-                        .join(", ");
-                      return (
-                        <div
-                          key={width}
-                          className="rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-2"
+                    {LATEST_EMAIL_DEVICE_WIDTHS.map(({ width, label }) => (
+                      <div
+                        key={width}
+                        className={cn("rounded-xl border p-2 transition-colors", frameClass)}
+                      >
+                        <p
+                          className={cn(
+                            "mb-2 text-xs font-medium",
+                            darkPreview ? "text-zinc-300" : "text-zinc-700"
+                          )}
                         >
-                          <p className="mb-2 text-xs font-medium">
-                            {width}px{names ? ` · ${names}` : ""}
-                          </p>
-                          <iframe
-                            title={`Email at ${width}px`}
-                            srcDoc={previewHtml}
-                            sandbox="allow-same-origin"
-                            className="block bg-white"
-                            style={{ width, height: 560 }}
-                          />
-                        </div>
-                      );
-                    })}
+                          {width}px · {label}
+                        </p>
+                        <iframe
+                          key={`w-${width}-${darkPreview}-${sourceHtml.length}`}
+                          title={`Email at ${width}px`}
+                          srcDoc={previewHtml}
+                          sandbox=""
+                          className="block rounded-md"
+                          style={{ width, height: 560, border: 0 }}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>

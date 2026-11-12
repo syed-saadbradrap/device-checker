@@ -2,7 +2,6 @@
 
 import { use, useMemo, useState } from "react";
 import {
-  Camera,
   ExternalLink,
   Loader2,
   Play,
@@ -22,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs } from "@/components/ui/tabs";
 import { DeviceFrame } from "@/components/testing/device-frame";
 import { PreviewPane } from "@/components/testing/preview-pane";
 import { DEVICE_PRESETS, getDeviceById, type DevicePreset } from "@/lib/devices/presets";
@@ -44,9 +42,8 @@ type ViewportResult = {
   summary: Record<string, number>;
 };
 
-type Mode = "live" | "screenshots";
 
-const STARTER_DEVICES = ["iphone-16-pro", "ipad-pro-11-2024", "macbook-air-13"];
+const STARTER_DEVICES = ["iphone-18-pro", "iphone-duo", "ipad-pro-11-2024", "macbook-air-13"];
 const EXAMPLE_SITES = ["example.com", "wikipedia.org", "nextjs.org"];
 
 function resolveDevice(id: string): DevicePreset | undefined {
@@ -88,9 +85,7 @@ export default function ResponsiveTesterPage({
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [zoom, setZoom] = useState(0.4);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [mode, setMode] = useState<Mode>("live");
-  const [shots, setShots] = useState<Record<string, string>>({});
-  const [capturing, setCapturing] = useState(false);
+  const [runScripts, setRunScripts] = useState(true); // Interactive: menus, popups, maps need site JS
   const [pickerOpen, setPickerOpen] = useState(false);
   const [deviceQuery, setDeviceQuery] = useState("");
   const [customW, setCustomW] = useState(390);
@@ -119,8 +114,6 @@ export default function ResponsiveTesterPage({
       ? { w: d.width, h: d.height }
       : { w: d.height, h: d.width };
 
-  const shotKey = (d: DevicePreset) => `${d.id}:${orientation}`;
-
   function launch(value = urlInput) {
     const next = normalizeUrl(value);
     if (!next) {
@@ -130,9 +123,8 @@ export default function ResponsiveTesterPage({
     setUrlInput(next);
     setActiveUrl(next);
     setResults(null);
-    setShots({});
-    setMode("live");
     setRefreshKey((k) => k + 1);
+    toast.message("Live preview loaded — scroll inside each device");
   }
 
   function addDevice(id: string) {
@@ -157,42 +149,6 @@ export default function ResponsiveTesterPage({
       return;
     }
     addDevice(`custom:${customW}:${customH}`);
-  }
-
-  async function captureScreenshots(force = false) {
-    if (!activeUrl) return;
-    const targets = devices.filter((d) => force || !shots[shotKey(d)]);
-    if (targets.length === 0) return;
-    setCapturing(true);
-    let ok = 0;
-    for (const d of targets) {
-      const { w, h } = size(d);
-      const res = await apiFetch<{ imageBase64: string }>("/api/screenshot", {
-        method: "POST",
-        body: JSON.stringify({
-          url: activeUrl,
-          width: w,
-          height: h,
-          dpr: d.dpr,
-          deviceId: d.id.startsWith("custom:") ? undefined : d.id,
-          engine: "chromium",
-        }),
-      });
-      if (!res.ok) {
-        toast.error(`${d.name}: ${res.error}`);
-        continue;
-      }
-      ok++;
-      const key = shotKey(d);
-      setShots((prev) => ({ ...prev, [key]: res.data.imageBase64 }));
-    }
-    setCapturing(false);
-    if (ok) toast.success(`Captured ${ok} screenshot${ok === 1 ? "" : "s"}`);
-  }
-
-  function switchMode(next: Mode) {
-    setMode(next);
-    if (next === "screenshots") void captureScreenshots();
   }
 
   async function runAnalyzer() {
@@ -224,7 +180,7 @@ export default function ResponsiveTesterPage({
     <div className="space-y-4">
       <PageHeader
         title="Test Website"
-        description="Type a website, press Launch, and see it on a phone, tablet and laptop at the same time."
+        description="Pick devices, Launch a URL, then scroll the live preview inside each frame to check responsive layout."
       />
 
       <Card>
@@ -276,18 +232,9 @@ export default function ResponsiveTesterPage({
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Tabs
-              value={mode}
-              onChange={switchMode}
-              tabs={[
-                { id: "live", label: "Live preview" },
-                {
-                  id: "screenshots",
-                  label: "Real browser screenshots",
-                  badge: capturing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : undefined,
-                },
-              ]}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="info">Live preview</Badge>
+            </div>
             <div className="flex flex-wrap items-center gap-1">
               <Button
                 size="sm"
@@ -316,22 +263,40 @@ export default function ResponsiveTesterPage({
               >
                 <ZoomIn className="h-3.5 w-3.5" />
               </Button>
-              {mode === "live" ? (
-                <Button size="sm" variant="outline" onClick={() => setRefreshKey((k) => k + 1)}>
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Reload
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={capturing}
-                  onClick={() => void captureScreenshots(true)}
+              <div
+                className="inline-flex overflow-hidden rounded-md border border-[var(--border)] text-xs"
+                role="group"
+                aria-label="Preview mode"
+              >
+                <button
+                  type="button"
+                  aria-pressed={!runScripts}
+                  title="Most reliable: shows the full layout with all images, fonts and styles. Menus and sliders don't animate."
+                  onClick={() => setRunScripts(false)}
+                  className={cn(
+                    "px-2.5 py-1.5 font-medium",
+                    !runScripts ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "hover:bg-[var(--accent)]"
+                  )}
                 >
-                  <Camera className="h-3.5 w-3.5" />
-                  Retake
-                </Button>
-              )}
+                  Visual
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={runScripts}
+                  title="Runs the site's JavaScript (menus, sliders, tabs). Some sites render blank or incomplete; we fall back to Visual automatically."
+                  onClick={() => setRunScripts(true)}
+                  className={cn(
+                    "border-l border-[var(--border)] px-2.5 py-1.5 font-medium",
+                    runScripts ? "bg-[var(--primary)] text-[var(--primary-foreground)]" : "hover:bg-[var(--accent)]"
+                  )}
+                >
+                  Interactive
+                </button>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setRefreshKey((k) => k + 1)}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Reload previews
+              </Button>
               <a href={activeUrl} target="_blank" rel="noopener noreferrer">
                 <Button size="sm" variant="ghost">
                   <ExternalLink className="h-3.5 w-3.5" />
@@ -342,9 +307,9 @@ export default function ResponsiveTesterPage({
           </div>
 
           <p className="text-xs text-[var(--muted-foreground)]">
-            {mode === "live"
-              ? "Live preview loads the real site inside each frame so you can scroll and click. Some sites block this — if so, switch to screenshots."
-              : "Screenshots are taken in a real Chromium browser at each device's screen size. They always work, even when live preview is blocked."}
+            Default is <strong>Interactive</strong> — scroll, open menus/popups, and check maps inside
+            each device. Switch to <strong>Visual</strong> only if a site goes blank (layout-only,
+            no JS).
           </p>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -437,48 +402,17 @@ export default function ResponsiveTesterPage({
             <div className="flex gap-6 overflow-x-auto pb-4">
               {devices.map((d) => {
                 const { w, h } = size(d);
-                const shot = shots[shotKey(d)];
                 return (
-                  <div key={d.id} className="flex shrink-0 flex-col items-center gap-1">
-                    <Badge variant={mode === "live" ? "info" : "success"}>
-                      {mode === "live" ? "Live iframe preview" : "Real browser screenshot"}
-                    </Badge>
+                  <div key={`${d.id}:${orientation}:${refreshKey}`} className="flex shrink-0 flex-col items-center gap-1">
+                    <Badge variant="info">Live · scroll inside</Badge>
                     <DeviceFrame device={d} scale={zoom} orientation={orientation}>
-                      {mode === "live" ? (
-                        <PreviewPane
-                          url={activeUrl}
-                          width={w}
-                          height={h}
-                          refreshKey={refreshKey}
-                          onUseScreenshots={() => switchMode("screenshots")}
-                        />
-                      ) : shot ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={`data:image/png;base64,${shot}`}
-                          alt={`${d.name} screenshot`}
-                          width={w}
-                          height={h}
-                          className="block"
-                        />
-                      ) : (
-                        <div
-                          className="flex flex-col items-center justify-center gap-3 bg-[var(--muted)] text-center"
-                          style={{ width: w, height: h }}
-                        >
-                          {capturing ? (
-                            <>
-                              <Loader2 className="h-10 w-10 animate-spin text-[var(--muted-foreground)]" />
-                              <p className="text-base text-[var(--muted-foreground)]">Taking screenshot…</p>
-                            </>
-                          ) : (
-                            <Button size="lg" onClick={() => void captureScreenshots()}>
-                              <Camera className="h-4 w-4" />
-                              Take screenshot
-                            </Button>
-                          )}
-                        </div>
-                      )}
+                      <PreviewPane
+                        url={activeUrl}
+                        width={w}
+                        height={h}
+                        refreshKey={refreshKey}
+                        scripts={runScripts}
+                      />
                     </DeviceFrame>
                   </div>
                 );

@@ -1,6 +1,32 @@
 import { prisma } from "@/lib/db";
 import { DEVICE_PRESETS } from "@/lib/devices/presets";
-import { jsonError, jsonOk, publicErrorMessage } from "@/lib/api/http";
+import { jsonOk } from "@/lib/api/http";
+
+const emptyStats = {
+  counts: {
+    projects: 0,
+    sessions: 0,
+    screenshots: 0,
+    reports: 0,
+    jobs: 0,
+    customDevices: 0,
+    favorites: 0,
+    devicePresets: DEVICE_PRESETS.length,
+    completedSessions: 0,
+    failedSessions: 0,
+  },
+  sessionsByType: [] as Array<{ type: string; count: number }>,
+  jobsByStatus: [] as Array<{ status: string; count: number }>,
+  recentSessions: [] as Array<{
+    id: string;
+    type: string;
+    target: string;
+    status: string;
+    progress: number;
+    createdAt: Date;
+    completedAt: Date | null;
+  }>,
+};
 
 export async function GET() {
   try {
@@ -15,6 +41,8 @@ export async function GET() {
       recentSessions,
       sessionsByType,
       jobsByStatus,
+      completedSessions,
+      failedSessions,
     ] = await Promise.all([
       prisma.project.count(),
       prisma.testSession.count(),
@@ -44,14 +72,9 @@ export async function GET() {
         by: ["status"],
         _count: { _all: true },
       }),
+      prisma.testSession.count({ where: { status: "completed" } }),
+      prisma.testSession.count({ where: { status: "failed" } }),
     ]);
-
-    const completedSessions = await prisma.testSession.count({
-      where: { status: "completed" },
-    });
-    const failedSessions = await prisma.testSession.count({
-      where: { status: "failed" },
-    });
 
     return jsonOk({
       counts: {
@@ -66,17 +89,23 @@ export async function GET() {
         completedSessions,
         failedSessions,
       },
-      sessionsByType: sessionsByType.map((row: { type: string; _count: { _all: number } }) => ({
+      sessionsByType: sessionsByType.map((row) => ({
         type: row.type,
         count: row._count._all,
       })),
-      jobsByStatus: jobsByStatus.map((row: { status: string; _count: { _all: number } }) => ({
+      jobsByStatus: jobsByStatus.map((row) => ({
         status: row.status,
         count: row._count._all,
       })),
       recentSessions,
     });
   } catch (e) {
-    return jsonError(publicErrorMessage(e, "Failed to load stats"), 500);
+    // Never surface raw Prisma/env internals on the home page
+    console.error("[stats]", e instanceof Error ? e.message : e);
+    return jsonOk({
+      ...emptyStats,
+      unavailable: true,
+      message: "Activity history is temporarily unavailable. You can still run tests.",
+    });
   }
 }
