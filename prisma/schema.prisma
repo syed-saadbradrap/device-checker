@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  urls        ProjectUrl[]
+  emails      EmailTemplate[]
+  sessions    TestSession[]
+  screenshots Screenshot[]
+  reports     Report[]
+}
+
+model ProjectUrl {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  url       String
+  label     String?
+  createdAt DateTime @default(now())
+}
+
+model EmailTemplate {
+  id        String   @id @default(cuid())
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name      String
+  html      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TestSession {
+  id          String   @id @default(cuid())
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  type        String
+  target      String
+  status      String   @default("pending")
+  progress    Int      @default(0)
+  results     String?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  completedAt DateTime?
+  screenshots Screenshot[]
+  reports     Report[]
+}
+
+model Screenshot {
+  id          String       @id @default(cuid())
+  projectId   String?
+  project     Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sessionId   String?
+  session     TestSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  url         String
+  deviceId    String?
+  browser     String?
+  theme       String?
+  width       Int
+  height      Int
+  filePath    String
+  isBaseline  Boolean      @default(false)
+  label       String?
+  createdAt   DateTime     @default(now())
+}
+
+model Report {
+  id        String       @id @default(cuid())
+  projectId String?
+  project   Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  sessionId String?
+  session   TestSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  title     String
+  type      String
+  format    String       @default("json")
+  data      String
+  filePath  String?
+  createdAt DateTime     @default(now())
+}
+
+model CustomDevice {
+  id          String   @id @default(cuid())
+  name        String
+  brand       String   @default("Custom")
+  category    String
+  width       Int
+  height      Int
+  dpr         Float    @default(1)
+  physicalW   Int?
+  physicalH   Int?
+  userAgent   String?
+  isFavorite  Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model DeviceFavorite {
+  id       String @id @default(cuid())
+  deviceId String @unique
+}
+
+model AppSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model Job {
+  id          String   @id @default(cuid())
+  type        String
+  status      String   @default("queued")
+  progress    Int      @default(0)
+  payload     String
+  result      String?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  completedAt DateTime?
+}
